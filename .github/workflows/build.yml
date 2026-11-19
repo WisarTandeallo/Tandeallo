@@ -1,0 +1,137 @@
+name: Build kernel OTG-charge (Mi Mix 2S, LineageOS 22.2)
+
+on:
+  push:
+    branches: [kernel-otg-charge]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  KBRANCH: lineage-22.2
+  KCOMMIT: aa8adfe9bf21
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 170
+    steps:
+      - name: Ambil repo ini
+        uses: actions/checkout@v4
+
+      - name: Pasang alat build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev cpio \
+            python3 git zip device-tree-compiler \
+            binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
+
+      - name: Pasang clang 19 (sama versi dengan kernel di ponsel)
+        run: |
+          wget -q https://apt.llvm.org/llvm.sh
+          sudo bash llvm.sh 19
+          echo "/usr/lib/llvm-19/bin" >> "$GITHUB_PATH"
+
+      - name: Unduh source kernel
+        run: |
+          git clone --filter=blob:none --single-branch -b "$KBRANCH" \
+            https://github.com/LineageOS/android_kernel_xiaomi_sdm845 kernel
+          cd kernel
+          if git checkout "$KCOMMIT"; then
+            echo "Memakai commit $KCOMMIT"
+          else
+            echo "::warning::Commit $KCOMMIT tidak ditemukan, memakai ujung cabang"
+          fi
+          git log -1 --oneline | tee ../commit.txt
+
+      - name: Pasang patch OTG-charge
+        run: python3 scripts/patch_smb.py kernel 2>&1 | tee patch.log
+
+      - name: Siapkan konfigurasi kernel
+        run: |
+          clang --version | head -1
+          cd kernel
+          ARGS="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
+                CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
+          mkdir -p out
+          if [ -f ../config.gz ]; then
+            echo "Memakai config.gz dari ponsel"
+            zcat ../config.gz > out/.config
+          else
+            echo "config.gz belum ada, memakai konfigurasi dari device tree LineageOS"
+            git clone --depth=1 -b "$KBRANCH" https://github.com/LineageOS/android_device_xiaomi_sdm845-common ../dt-common
+            git clone --depth=1 -b "$KBRANCH" https://github.com/LineageOS/android_device_xiaomi_polaris ../dt-polaris
+            CFGS=$(python3 - <<'PY'
+          import re
+          items = []
+          for f in ["../dt-common/BoardConfigCommon.mk", "../dt-polaris/BoardConfig.mk"]:
+              for line in open(f):
+                  m = re.match(r"\s*TARGET_KERNEL_CONFIG\s*(:=|\+=|=)\s*(.*)", line)
+                  if m:
+                      vals = m.group(2).split()
+                      items = vals if m.group(1) != "+=" else items + vals
+          print(" ".join(items))
+          PY
+            )
+            echo "TARGET_KERNEL_CONFIG: $CFGS"
+            set -- $CFGS
+            make $ARGS "$1"
+            shift
+            for frag in "$@"; do
+              ARCH=arm64 scripts/kconfig/merge_config.sh -m -O out out/.config "arch/arm64/configs/$frag"
+            done
+          fi
+          make $ARGS olddefconfig
+          echo "$ARGS" > ../args.txt
+
+      - name: Build kernel
+        run: |
+          cd kernel
+          ARGS=$(cat ../args.txt)
+          if grep -q '^CONFIG_LTO_CLANG=y' out/.config; then
+            ARGS="$ARGS LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip"
+          fi
+          set +e
+          make $ARGS -j"$(nproc)" > ../build.log 2>&1
+          echo $? > ../build_status.txt
+          tail -80 ../build.log
+          exit "$(cat ../build_status.txt)"
+
+      - name: Kumpulkan hasil
+        if: always()
+        run: |
+          mkdir -p hasil
+          cp kernel/out/arch/arm64/boot/Image hasil/ 2>/dev/null || true
+          cp kernel/out/arch/arm64/boot/Image.gz-dtb hasil/ 2>/dev/null || true
+          cp build.log patch.log commit.txt hasil/ 2>/dev/null || true
+          ls -l hasil
+
+      - name: Unggah hasil (artifact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-otg-charge
+          path: hasil/
+
+      - name: Simpan ringkasan ke cabang kernel-otg-hasil
+        if: always()
+        run: |
+          mkdir -p ringkasan
+          echo "run: ${{ github.run_id }}" > ringkasan/status.txt
+          echo "build_exit: $(cat build_status.txt 2>/dev/null || echo tidak-sampai-build)" >> ringkasan/status.txt
+          cat commit.txt >> ringkasan/status.txt 2>/dev/null || true
+          cp patch.log ringkasan/ 2>/dev/null || true
+          tail -300 build.log > ringkasan/build-tail.log 2>/dev/null || true
+          grep -nE "error:|Error [0-9]" build.log | head -100 > ringkasan/errors.log 2>/dev/null || true
+          if [ -f kernel/out/arch/arm64/boot/Image ]; then
+            gzip -9 -c kernel/out/arch/arm64/boot/Image > ringkasan/Image.gz
+          fi
+          cd ringkasan
+          git init -q
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git checkout -q -b kernel-otg-hasil
+          git add -A
+          git commit -q -m "Hasil build ${{ github.run_id }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" kernel-otg-hasil
