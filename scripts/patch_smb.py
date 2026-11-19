@@ -60,7 +60,7 @@ print(f"Kondisi SDP yang diubah: {n}")
 
 # 2b) Sisipkan pengganti nilai setelah deklarasi variabel di awal fungsi.
 lines = body.split("\n")
-decl = re.compile(r"^\s*(?:const\s+)?(?:int|bool|u8|u16|u32|unsigned\s+int|union\s+\w+|struct\s+\w+\s*\*?)\s+[\w\s,=*\-]+;\s*$")
+decl = re.compile(r"^\s*(?:const\s+)?(?:int|bool|u8|u16|u32|unsigned\s+int|union\s+\w+|struct\s+\w+)\s*\*?\s*\w+[^;()]*;\s*$")
 idx = 0
 for i, line in enumerate(lines):
     s = line.strip()
@@ -72,7 +72,7 @@ for i, line in enumerate(lines):
     break
 hook = [
     "",
-    "\tif (otg_chg_icl_ua > 0 && icl_ua >= 25000 && icl_ua != INT_MAX)",
+    "\tif (otg_chg_icl_ua > 0 && icl_ua > 25000 && icl_ua != INT_MAX)",
     "\t\ticl_ua = otg_chg_icl_ua > 3000000 ? 3000000 : otg_chg_icl_ua;",
     "",
 ]

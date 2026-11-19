@@ -26,6 +26,12 @@ jobs:
           sudo apt-get install -y bc bison flex libssl-dev libelf-dev cpio \
             python3 git zip device-tree-compiler \
             binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
+          # Folder khusus assembler ARM32 untuk vdso32 (clang mencari "as" di folder ini)
+          sudo mkdir -p /opt/arm32/bin
+          for t in as ld ar nm objcopy objdump strip; do
+            sudo ln -sf /usr/bin/arm-linux-gnueabi-$t /opt/arm32/bin/arm-linux-gnueabi-$t
+            sudo ln -sf /usr/bin/arm-linux-gnueabi-$t /opt/arm32/bin/$t
+          done
 
       - name: Pasang clang 19 (sama versi dengan kernel di ponsel)
         run: |
@@ -53,7 +59,7 @@ jobs:
           clang --version | head -1
           cd kernel
           ARGS="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
-                CROSS_COMPILE=/usr/bin/aarch64-linux-gnu- CROSS_COMPILE_ARM32=/usr/bin/arm-linux-gnueabi-"
+                CROSS_COMPILE=/usr/bin/aarch64-linux-gnu- CROSS_COMPILE_ARM32=/opt/arm32/bin/arm-linux-gnueabi-"
           mkdir -p out
           if [ -f ../config.gz ]; then
             echo "Memakai config.gz dari ponsel"
