@@ -53,7 +53,7 @@ jobs:
           clang --version | head -1
           cd kernel
           ARGS="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
-                CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
+                CROSS_COMPILE=/usr/bin/aarch64-linux-gnu- CROSS_COMPILE_ARM32=/usr/bin/arm-linux-gnueabi-"
           mkdir -p out
           if [ -f ../config.gz ]; then
             echo "Memakai config.gz dari ponsel"
